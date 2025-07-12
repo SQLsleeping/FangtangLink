@@ -27,7 +27,7 @@ class Config:
     DEFAULT_PORT = '/dev/ttyS0'  # 用户指定的串口
 
     # GPIO配置 (Raspberry Pi)
-    RESET_PIN = 23  # GPIO 23 连接Arduino RST引脚
+    RESET_PIN = 4   # GPIO 4 连接Arduino RST引脚
     POWER_PIN = None  # 可选的电源控制引脚
     
     # avrdude配置

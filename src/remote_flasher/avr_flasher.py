@@ -13,12 +13,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any, Tuple
 from .config import get_config
 
-try:
-    from gpiozero import OutputDevice
-    GPIO_AVAILABLE = True
-except ImportError:
-    GPIO_AVAILABLE = False
-    logging.warning("gpiozero not available, GPIO control disabled")
+# 使用gpio命令行工具进行GPIO控制，不依赖gpiozero
 
 class AVRFlasher:
     """AVR单片机烧录器"""
@@ -26,8 +21,7 @@ class AVRFlasher:
     def __init__(self, config_name=None):
         self.config = get_config(config_name)
         self.logger = self._setup_logger()
-        self.reset_pin = None
-        self.power_pin = None
+        self.gpio_available = False
         self._setup_gpio()
         self._ensure_upload_dir()
     
@@ -53,26 +47,26 @@ class AVRFlasher:
         return logger
     
     def _setup_gpio(self):
-        """设置GPIO"""
-        if not GPIO_AVAILABLE:
-            self.logger.warning("gpiozero not available, skipping GPIO setup")
-            return
-
+        """设置GPIO - 使用gpio命令行工具"""
         try:
-            # 设置复位引脚 (默认为高电平，低电平有效复位)
-            if self.config.RESET_PIN:
-                self.reset_pin = OutputDevice(self.config.RESET_PIN, active_high=True, initial_value=True)
-                self.logger.info(f"GPIO {self.config.RESET_PIN} configured for reset control")
+            # 检查gpio命令是否可用
+            result = subprocess.run(["gpio", "-v"], capture_output=True, text=True)
+            if result.returncode == 0:
+                self.gpio_available = True
+                # 初始化GPIO 4为输出模式，默认高电平
+                subprocess.run(["gpio", "mode", "4", "out"], capture_output=True, text=True, check=True)
+                subprocess.run(["gpio", "write", "4", "1"], capture_output=True, text=True, check=True)
+                self.logger.info("GPIO 4 configured for reset control (using gpio command)")
+            else:
+                self.gpio_available = False
+                self.logger.warning("gpio command not available")
 
-            # 设置电源控制引脚 (可选)
-            if self.config.POWER_PIN:
-                self.power_pin = OutputDevice(self.config.POWER_PIN, active_high=True, initial_value=True)
-                self.logger.info(f"GPIO {self.config.POWER_PIN} configured for power control")
-
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            self.gpio_available = False
+            self.logger.warning(f"GPIO setup failed: {e}")
         except Exception as e:
-            self.logger.error(f"GPIO setup failed: {e}")
-            self.reset_pin = None
-            self.power_pin = None
+            self.gpio_available = False
+            self.logger.error(f"GPIO setup error: {e}")
     
     def _ensure_upload_dir(self):
         """确保上传目录存在"""
@@ -80,43 +74,42 @@ class AVRFlasher:
         upload_dir.mkdir(exist_ok=True)
         self.logger.info(f"Upload directory: {upload_dir.absolute()}")
     
-    def reset_target(self, duration=0.1):
-        """复位目标设备"""
-        if not self.reset_pin:
-            self.logger.warning("GPIO reset not available")
+    def control_arduino_reset(self, reset=True):
+        """
+        通过GPIO控制Arduino的复位 (使用gpio命令行工具)
+        reset=True: 使Arduino进入复位状态 (GPIO 4 设为0)
+        reset=False: 使Arduino退出复位状态 (GPIO 4 设为1)
+        """
+        if not self.gpio_available:
+            self.logger.warning("GPIO控制不可用")
             return False
 
+        state = "0" if reset else "1"
+        cmd = ["gpio", "write", "4", state]  # 使用GPIO 4
+
         try:
-            self.logger.info("Resetting target device...")
-            # 拉低复位引脚 (复位)
-            self.reset_pin.off()
-            time.sleep(duration)
-            # 拉高复位引脚 (释放复位)
-            self.reset_pin.on()
-            time.sleep(0.1)  # 等待设备启动
+            subprocess.run(cmd, capture_output=True, text=True, check=True)
+            action = "进入" if reset else "退出"
+            self.logger.info(f"Arduino {action}复位状态 (GPIO 4)")
             return True
-        except Exception as e:
-            self.logger.error(f"Reset failed: {e}")
+        except subprocess.CalledProcessError as e:
+            self.logger.warning(f"GPIO控制失败: {e.stderr}")
             return False
+        except FileNotFoundError:
+            self.logger.warning("gpio命令未找到，无法控制复位")
+            return False
+
+    def reset_target(self, duration=0.1):
+        """简单复位目标设备 (兼容旧接口)"""
+        if not self.control_arduino_reset(reset=True):
+            return False
+        time.sleep(duration)
+        return self.control_arduino_reset(reset=False)
 
     def power_cycle_target(self, off_duration=0.5):
-        """电源循环目标设备"""
-        if not self.power_pin:
-            self.logger.warning("GPIO power control not available")
-            return False
-
-        try:
-            self.logger.info("Power cycling target device...")
-            # 关闭电源
-            self.power_pin.off()
-            time.sleep(off_duration)
-            # 开启电源
-            self.power_pin.on()
-            time.sleep(0.5)  # 等待设备启动
-            return True
-        except Exception as e:
-            self.logger.error(f"Power cycle failed: {e}")
-            return False
+        """电源循环目标设备 (暂不支持，因为只配置了复位引脚)"""
+        self.logger.warning("电源循环功能未配置")
+        return False
     
     def download_hex_file(self, url: str) -> Optional[str]:
         """从URL下载hex文件"""
@@ -209,11 +202,24 @@ class AVRFlasher:
                 result['message'] = 'Invalid hex file format'
                 return result
 
-            # 烧录前复位目标设备
-            self.logger.info("Preparing target device for flashing...")
-            self.reset_target()
+            # 实现FangTangLink的Reset-Flash-Reset时序
+            self.logger.info("开始烧录程序到Arduino...")
 
-            # 构建avrdude命令
+            # 1. 使Arduino进入复位状态
+            if not self.control_arduino_reset(reset=True):
+                self.logger.warning("无法控制Arduino复位，继续尝试烧录...")
+            else:
+                # 2. 等待一小段时间确保复位生效
+                time.sleep(0.5)
+
+                # 3. 使Arduino退出复位状态，进入bootloader
+                if not self.control_arduino_reset(reset=False):
+                    self.logger.warning("无法退出Arduino复位状态")
+                else:
+                    # 4. 给bootloader一点时间初始化
+                    time.sleep(0.5)
+
+            # 5. 构建并执行avrdude命令
             cmd = self.build_avrdude_command(hex_file, **kwargs)
             self.logger.info(f"Executing command: {' '.join(cmd)}")
 
@@ -240,9 +246,11 @@ class AVRFlasher:
                 result['message'] = 'Flash completed successfully'
                 self.logger.info(f"Flash successful in {result['duration']:.2f}s")
 
-                # 烧录成功后重启目标设备
-                self.logger.info("Restarting target device after successful flash...")
-                self.reset_target(duration=0.1)
+                # 6. 操作后再次复位Arduino使程序开始运行 (FangTangLink方式)
+                self.control_arduino_reset(reset=True)
+                time.sleep(0.1)
+                self.control_arduino_reset(reset=False)
+                self.logger.info("Arduino已重启，程序开始运行")
 
             else:
                 result['message'] = f'Flash failed with return code {process.returncode}'
@@ -259,6 +267,76 @@ class AVRFlasher:
             self.logger.error(f"Flash operation failed: {e}")
 
         return result
+
+    def perform_arduino_operation(self, hex_file=None, **kwargs):
+        """
+        完整的Arduino操作流程，完全模拟FangTangLink的实现
+        包括复位控制和时序管理
+        """
+        try:
+            if hex_file and not os.path.exists(hex_file):
+                self.logger.error(f"文件 {hex_file} 不存在")
+                return {
+                    'success': False,
+                    'message': f'文件 {hex_file} 不存在',
+                    'error': 'File not found',
+                    'output': '',
+                    'duration': 0
+                }
+
+            operation_type = "上传程序" if hex_file else "执行操作"
+            self.logger.info(f"开始{operation_type}到Arduino...")
+
+            # 1. 使Arduino进入复位状态
+            if not self.control_arduino_reset(reset=True):
+                self.logger.error("错误: 无法控制Arduino复位")
+                # 继续尝试，不返回失败
+
+            # 2. 等待一小段时间确保复位生效
+            time.sleep(0.5)
+
+            # 3. 使Arduino退出复位状态，进入bootloader
+            if not self.control_arduino_reset(reset=False):
+                self.logger.error("错误: 无法退出Arduino复位状态")
+                # 继续尝试，不返回失败
+
+            # 4. 给bootloader一点时间初始化
+            time.sleep(0.5)
+
+            # 5. 执行烧录操作
+            if hex_file:
+                result = self.flash_hex_file(hex_file, **kwargs)
+            else:
+                # 如果没有hex文件，只是执行复位操作
+                result = {
+                    'success': True,
+                    'message': '复位操作完成',
+                    'error': '',
+                    'output': '',
+                    'duration': 1.0
+                }
+
+            # 6. 操作后再次复位Arduino使程序开始运行
+            if result['success']:
+                self.control_arduino_reset(reset=True)
+                time.sleep(0.1)
+                self.control_arduino_reset(reset=False)
+                self.logger.info("Arduino已重启，程序开始运行")
+                self.logger.info("操作成功完成!")
+            else:
+                self.logger.info("操作失败!")
+
+            return result
+
+        except Exception as e:
+            self.logger.error(f"操作过程中发生异常: {str(e)}")
+            return {
+                'success': False,
+                'message': f'操作异常: {str(e)}',
+                'error': str(e),
+                'output': '',
+                'duration': 0
+            }
 
     def flash_from_url(self, url: str, **kwargs) -> Dict[str, Any]:
         """从URL下载并烧录hex文件"""
@@ -346,15 +424,10 @@ class AVRFlasher:
 
     def cleanup(self):
         """清理资源"""
-        try:
-            if self.reset_pin:
-                self.reset_pin.close()
-                self.logger.info("Reset pin cleanup completed")
-            if self.power_pin:
-                self.power_pin.close()
-                self.logger.info("Power pin cleanup completed")
-        except Exception as e:
-            self.logger.error(f"GPIO cleanup failed: {e}")
+        # 使用gpio命令行工具时无需特殊清理
+        if self.gpio_available:
+            self.logger.info("GPIO cleanup completed")
+        pass
 
     def __del__(self):
         """析构函数"""

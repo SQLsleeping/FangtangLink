@@ -49,9 +49,6 @@ setup(
             "black>=21.0.0",
             "flake8>=3.8.0",
         ],
-        "gpio": [
-            "gpiozero>=1.6.0",
-        ],
     },
     entry_points={
         "console_scripts": [

@@ -31,17 +31,17 @@ GND             -->  GND
 - 使用 `/dev/ttyS0` (硬件串口)，不是 `/dev/ttyAMA0`
 - 确保电压兼容：Arduino Uno使用5V，某些Arduino变种使用3.3V
 
-### 2. 复位控制 (GPIO 23)
+### 2. 复位控制 (GPIO 4)
 
 用于程序烧录时的自动复位：
 
 ```
 Raspberry Pi GPIO    Arduino
-GPIO 23         -->  RST (复位引脚)
+GPIO 4          -->  RST (复位引脚)
 ```
 
 **复位电路：**
-- 直接连接：GPIO 23 → Arduino RST
+- 直接连接：GPIO 4 → Arduino RST
 - 或通过100nF电容连接（推荐）
 - 可选：添加10kΩ上拉电阻到VCC
 
@@ -52,7 +52,7 @@ Raspberry Pi                Arduino Uno
 ┌─────────────┐            ┌─────────────┐
 │ GPIO 14(TX) │────────────│ Pin 0 (RX)  │
 │ GPIO 15(RX) │────────────│ Pin 1 (TX)  │
-│ GPIO 23     │────────────│ RST         │
+│ GPIO 4      │────────────│ RST         │
 │ GND         │────────────│ GND         │
 │ 5V          │────────────│ VIN         │
 └─────────────┘            └─────────────┘
@@ -128,22 +128,20 @@ source venv/bin/activate
 python test_gpio.py
 ```
 
-### 3. 手动测试GPIO (Python)
-```python
-from gpiozero import OutputDevice
-import time
+### 3. 手动测试GPIO (gpio命令)
+```bash
+# 设置GPIO 4为输出模式
+gpio mode 4 out
 
-# 初始化GPIO 23作为输出引脚
-reset_pin = OutputDevice(23, active_high=True, initial_value=True)
+# 初始化为高电平
+gpio write 4 1
 
 # 执行复位操作
-print("复位Arduino...")
-reset_pin.off()  # 拉低（复位）
-time.sleep(0.1)
-reset_pin.on()   # 拉高（释放复位）
-
-# 清理
-reset_pin.close()
+echo "复位Arduino..."
+gpio write 4 0  # 拉低（复位）
+sleep 0.1
+gpio write 4 1  # 拉高（释放复位）
+echo "复位完成"
 ```
 
 ### 4. 使用RemoteFlasher测试
@@ -189,7 +187,7 @@ python test_gpio.py
    ```
 
 2. **复位不工作**
-   - 检查GPIO 23连接
+   - 检查GPIO 4连接
    - 验证复位电路
    - 测试手动复位
 

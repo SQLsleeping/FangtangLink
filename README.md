@@ -7,7 +7,7 @@
 - 🔥 **远程烧录**: 支持通过HTTP API烧录AVR单片机
 - 📁 **文件上传**: 支持直接上传hex文件进行烧录
 - 🌐 **URL下载**: 支持从URL下载hex文件并烧录
-- 🎛️ **GPIO控制**: 使用gpiozero库控制复位信号，支持烧录前复位和烧录后重启
+- 🎛️ **GPIO控制**: 使用GPIO 4控制复位信号，采用Reset-Flash-Reset时序
 - 🔧 **多种MCU**: 支持多种AVR微控制器型号
 - 📊 **设备信息**: 获取连接设备的详细信息
 - 🐍 **Python SDK**: 提供便于集成的Python客户端库
@@ -44,9 +44,9 @@ source venv/bin/activate
 # 安装依赖
 pip install -r requirements.txt
 
-# 安装avrdude (如果未安装)
+# 安装系统依赖
 sudo apt-get update
-sudo apt-get install avrdude
+sudo apt-get install avrdude wiringpi
 ```
 
 ### 2. 启动API服务器
@@ -146,7 +146,31 @@ Content-Type: application/json
 
 #### 6. 获取设备信息
 ```http
-GET /device/info?mcu=atmega328p&programmer=arduino&port=/dev/ttyUSB0
+GET /device/info?mcu=atmega328p&programmer=arduino&port=/dev/ttyS0
+```
+
+#### 7. 控制复位
+```http
+POST /control/reset
+Content-Type: application/json
+
+{
+  "reset": true,        // true=复位, false=释放复位
+  "duration": 0.2       // 复位持续时间(秒)
+}
+```
+
+#### 8. 完整Arduino操作
+```http
+POST /operation/arduino
+Content-Type: multipart/form-data
+
+参数:
+- file: hex文件 (可选)
+- mcu: 微控制器型号 (可选)
+- programmer: 编程器类型 (可选)
+- port: 串口 (可选)
+- baudrate: 波特率 (可选)
 ```
 
 ## 配置说明
@@ -162,7 +186,7 @@ export SECRET_KEY=your-secret-key
 - `DEFAULT_MCU`: 默认微控制器型号
 - `DEFAULT_PROGRAMMER`: 默认编程器类型
 - `DEFAULT_PORT`: 默认串口
-- `RESET_PIN`: GPIO复位引脚
+- `RESET_PIN`: GPIO复位引脚 (默认: 4)
 - `FLASH_TIMEOUT`: 烧录超时时间
 
 ## 硬件连接
@@ -170,7 +194,7 @@ export SECRET_KEY=your-secret-key
 ### Raspberry Pi GPIO连接
 ```
 Raspberry Pi    Arduino/AVR Target
-GPIO 23    -->  RST (复位引脚)
+GPIO 4     -->  RST (复位引脚)
 GND        -->  GND
 ```
 
@@ -202,6 +226,24 @@ python run_client.py --action flash-url --url https://example.com/firmware.hex
 
 # 或使用Makefile
 make run-client ARGS="--action status"
+```
+
+### 4. 测试GPIO控制
+
+```bash
+# 测试GPIO 4复位功能
+make reset-test
+
+# 手动测试GPIO控制
+gpio mode 4 out
+gpio write 4 0  # 复位
+sleep 0.1
+gpio write 4 1  # 释放复位
+
+# 通过API测试复位
+curl -X POST -H "Content-Type: application/json" \
+     -d '{"reset": true, "duration": 0.2}' \
+     http://localhost:5000/control/reset
 ```
 
 ### Python集成示例

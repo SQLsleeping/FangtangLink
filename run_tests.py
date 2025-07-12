@@ -8,20 +8,20 @@ import os
 import subprocess
 from pathlib import Path
 
-def run_gpio_test():
-    """运行GPIO测试"""
-    print("=== 运行GPIO测试 ===")
-    test_file = Path(__file__).parent / "tests" / "test_gpio.py"
-    
+def run_config_test():
+    """运行配置测试"""
+    print("=== 运行配置测试 ===")
+    test_file = Path(__file__).parent / "tests" / "test_config.py"
+
     try:
-        result = subprocess.run([sys.executable, str(test_file)], 
+        result = subprocess.run([sys.executable, str(test_file)],
                               capture_output=True, text=True)
         print(result.stdout)
         if result.stderr:
             print("错误输出:", result.stderr)
         return result.returncode == 0
     except Exception as e:
-        print(f"运行GPIO测试失败: {e}")
+        print(f"运行配置测试失败: {e}")
         return False
 
 def run_demo():
@@ -40,20 +40,20 @@ def run_demo():
         print(f"运行演示失败: {e}")
         return False
 
-def run_basic_example():
-    """运行基础示例"""
-    print("\n=== 运行基础示例 ===")
-    example_file = Path(__file__).parent / "examples" / "example.py"
-    
+def run_client_test():
+    """运行客户端测试"""
+    print("\n=== 运行客户端测试 ===")
+    test_file = Path(__file__).parent / "tests" / "test_client.py"
+
     try:
-        result = subprocess.run([sys.executable, str(example_file)], 
+        result = subprocess.run([sys.executable, str(test_file)],
                               capture_output=True, text=True)
         print(result.stdout)
         if result.stderr:
             print("错误输出:", result.stderr)
         return result.returncode == 0
     except Exception as e:
-        print(f"运行基础示例失败: {e}")
+        print(f"运行客户端测试失败: {e}")
         return False
 
 def main():
@@ -63,17 +63,17 @@ def main():
     
     success_count = 0
     total_tests = 3
-    
-    # 运行GPIO测试
-    if run_gpio_test():
+
+    # 运行配置测试
+    if run_config_test():
         success_count += 1
-    
+
+    # 运行客户端测试
+    if run_client_test():
+        success_count += 1
+
     # 运行演示
     if run_demo():
-        success_count += 1
-    
-    # 运行基础示例
-    if run_basic_example():
         success_count += 1
     
     # 总结

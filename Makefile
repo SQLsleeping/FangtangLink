@@ -1,6 +1,6 @@
 # RemoteFlasher Makefile
 
-.PHONY: help install install-dev test test-gpio run-server run-client clean lint format
+.PHONY: help install install-dev test run-server run-client clean lint format reset-test
 
 # 默认目标
 help:
@@ -8,7 +8,7 @@ help:
 	@echo "  install      - 安装项目依赖"
 	@echo "  install-dev  - 安装开发依赖"
 	@echo "  test         - 运行所有测试"
-	@echo "  test-gpio    - 运行GPIO测试"
+	@echo "  reset-test   - 测试GPIO复位功能"
 	@echo "  run-server   - 启动API服务器"
 	@echo "  run-client   - 运行客户端工具"
 	@echo "  clean        - 清理临时文件"
@@ -23,17 +23,20 @@ install:
 # 安装开发依赖
 install-dev: install
 	@echo "安装开发依赖..."
-	pip install -e ".[dev,gpio]"
+	pip install -e ".[dev]"
 
 # 运行所有测试
 test:
 	@echo "运行所有测试..."
 	python run_tests.py
 
-# 运行GPIO测试
-test-gpio:
-	@echo "运行GPIO测试..."
-	python tests/test_gpio.py
+# 测试GPIO复位功能
+reset-test:
+	@echo "测试GPIO复位功能..."
+	@echo "手动测试GPIO 4复位控制:"
+	@echo "1. 设置GPIO 4为输出: gpio mode 4 out"
+	@echo "2. 复位操作: gpio write 4 0; sleep 0.1; gpio write 4 1"
+	@echo "3. 或使用API: curl -X POST -H 'Content-Type: application/json' -d '{\"reset\": true, \"duration\": 0.2}' http://localhost:5000/control/reset"
 
 # 启动API服务器
 run-server:

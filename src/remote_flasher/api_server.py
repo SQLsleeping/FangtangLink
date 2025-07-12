@@ -89,7 +89,7 @@ class FlasherAPI:
             return jsonify({
                 'status': 'running',
                 'flasher_ready': True,
-                'gpio_available': bool(self.flasher.reset_pin),
+                'gpio_available': self.flasher.gpio_available,
                 'upload_folder': self.config.UPLOAD_FOLDER,
                 'supported_mcus': self.config.SUPPORTED_MCUS,
                 'supported_programmers': self.config.SUPPORTED_PROGRAMMERS
@@ -118,8 +118,8 @@ class FlasherAPI:
                 # 获取烧录参数
                 flash_params = self._get_flash_params(request)
                 
-                # 执行烧录
-                result = self.flasher.flash_hex_file(file_path, **flash_params)
+                # 执行烧录 (使用FangTangLink风格的完整操作流程)
+                result = self.flasher.perform_arduino_operation(file_path, **flash_params)
                 
                 # 清理文件
                 try:
@@ -169,6 +169,75 @@ class FlasherAPI:
                 
             except Exception as e:
                 self.logger.error(f"Device info error: {e}")
+                return jsonify({'error': str(e)}), 500
+
+        @app.route('/control/reset', methods=['POST'])
+        def control_reset():
+            """控制Arduino复位"""
+            try:
+                data = request.get_json() or {}
+                reset_state = data.get('reset', True)  # True=进入复位, False=退出复位
+                duration = data.get('duration', 0.1)   # 复位持续时间
+
+                if reset_state in [True, 'true', '1', 1]:
+                    # 进入复位状态
+                    success = self.flasher.control_arduino_reset(reset=True)
+                    if duration > 0:
+                        import time
+                        time.sleep(duration)
+                        # 自动退出复位状态
+                        success = success and self.flasher.control_arduino_reset(reset=False)
+                        message = f"复位操作完成 (持续{duration}秒)"
+                    else:
+                        message = "Arduino进入复位状态"
+                elif reset_state in [False, 'false', '0', 0]:
+                    # 退出复位状态
+                    success = self.flasher.control_arduino_reset(reset=False)
+                    message = "Arduino退出复位状态"
+                else:
+                    return jsonify({'error': 'Invalid reset state. Use true/false'}), 400
+
+                return jsonify({
+                    'success': success,
+                    'message': message,
+                    'reset_state': reset_state,
+                    'duration': duration
+                })
+
+            except Exception as e:
+                self.logger.error(f"Reset control error: {e}")
+                return jsonify({'error': str(e)}), 500
+
+        @app.route('/operation/arduino', methods=['POST'])
+        def arduino_operation():
+            """执行完整的Arduino操作 (FangTangLink风格)"""
+            try:
+                # 检查是否有文件上传
+                hex_file_path = None
+                if 'file' in request.files:
+                    file = request.files['file']
+                    if file.filename != '' and self._allowed_file(file.filename):
+                        filename = secure_filename(file.filename)
+                        hex_file_path = os.path.join(self.config.UPLOAD_FOLDER, filename)
+                        file.save(hex_file_path)
+
+                # 获取操作参数
+                flash_params = self._get_flash_params(request)
+
+                # 执行完整的Arduino操作
+                result = self.flasher.perform_arduino_operation(hex_file_path, **flash_params)
+
+                # 清理临时文件
+                if hex_file_path:
+                    try:
+                        os.unlink(hex_file_path)
+                    except:
+                        pass
+
+                return jsonify(result)
+
+            except Exception as e:
+                self.logger.error(f"Arduino operation error: {e}")
                 return jsonify({'error': str(e)}), 500
         
         @app.route('/config', methods=['GET'])
