@@ -8,6 +8,8 @@
 - 📁 **文件上传**: 支持直接上传hex文件进行烧录
 - 🌐 **URL下载**: 支持从URL下载hex文件并烧录
 - 🎛️ **GPIO控制**: 使用GPIO 4控制复位信号，采用Reset-Flash-Reset时序
+- 📡 **流式输出**: 实时获取avrdude烧录过程输出
+- 🔌 **串口调试**: 远程控制串口进行调试和通信
 - 🔧 **多种MCU**: 支持多种AVR微控制器型号
 - 📊 **设备信息**: 获取连接设备的详细信息
 - 🐍 **Python SDK**: 提供便于集成的Python客户端库
@@ -90,6 +92,26 @@ result = client.flash_url(
     "https://example.com/firmware.hex",
     mcu="atmega328p"
 )
+
+# 流式烧录 (实时获取输出)
+for output in client.flash_file_stream("firmware.hex", mcu="atmega328p", port="/dev/ttyS0"):
+    print(f"[{output['type']}] {output['message']}")
+
+# 串口调试
+# 打开串口
+result = client.serial_open("/dev/ttyS0", 9600)
+if result['success']:
+    # 发送数据
+    client.serial_write("Hello Arduino!")
+
+    # 读取数据
+    data = client.serial_read()
+    if data['success']:
+        for line in data['data']:
+            print(f"收到: {line}")
+
+    # 关闭串口
+    client.serial_close()
 ```
 
 ## API接口文档
@@ -173,6 +195,63 @@ Content-Type: multipart/form-data
 - baudrate: 波特率 (可选)
 ```
 
+#### 9. 流式烧录
+```http
+POST /flash/stream
+Content-Type: multipart/form-data
+
+参数:
+- file: hex文件
+- mcu: 微控制器型号 (可选)
+- programmer: 编程器类型 (可选)
+- port: 串口 (可选)
+- baudrate: 波特率 (可选)
+
+返回: 流式文本响应，实时输出烧录过程
+```
+
+#### 10. 串口调试
+```http
+# 打开串口连接
+POST /serial/open
+Content-Type: application/json
+{
+  "port": "/dev/ttyS0",
+  "baudrate": 9600,
+  "timeout": 1
+}
+
+# 读取串口数据
+POST /serial/read
+Content-Type: application/json
+{
+  "port": "/dev/ttyS0",
+  "baudrate": 9600,
+  "max_lines": 100
+}
+
+# 写入串口数据
+POST /serial/write
+Content-Type: application/json
+{
+  "port": "/dev/ttyS0",
+  "baudrate": 9600,
+  "data": "Hello Arduino!",
+  "add_newline": true
+}
+
+# 关闭串口连接
+POST /serial/close
+Content-Type: application/json
+{
+  "port": "/dev/ttyS0",
+  "baudrate": 9600
+}
+
+# 获取串口状态
+GET /serial/status
+```
+
 ## 配置说明
 
 ### 环境变量
@@ -244,6 +323,35 @@ gpio write 4 1  # 释放复位
 curl -X POST -H "Content-Type: application/json" \
      -d '{"reset": true, "duration": 0.2}' \
      http://localhost:5000/control/reset
+```
+
+### 5. 流式烧录和串口调试
+
+```bash
+# 流式烧录 (实时查看avrdude输出)
+curl -X POST -F "file=@firmware.hex" \
+     "http://localhost:5000/flash/stream?mcu=atmega328p&port=/dev/ttyS0"
+
+# 串口调试
+# 打开串口
+curl -X POST -H "Content-Type: application/json" \
+     -d '{"port": "/dev/ttyS0", "baudrate": 9600}' \
+     http://localhost:5000/serial/open
+
+# 发送数据
+curl -X POST -H "Content-Type: application/json" \
+     -d '{"port": "/dev/ttyS0", "baudrate": 9600, "data": "Hello Arduino!"}' \
+     http://localhost:5000/serial/write
+
+# 读取数据
+curl -X POST -H "Content-Type: application/json" \
+     -d '{"port": "/dev/ttyS0", "baudrate": 9600, "max_lines": 10}' \
+     http://localhost:5000/serial/read
+
+# 关闭串口
+curl -X POST -H "Content-Type: application/json" \
+     -d '{"port": "/dev/ttyS0", "baudrate": 9600}' \
+     http://localhost:5000/serial/close
 ```
 
 ### Python集成示例

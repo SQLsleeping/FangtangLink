@@ -227,18 +227,37 @@ class AVRFlasher:
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
+                stderr=subprocess.STDOUT,  # 合并stderr到stdout
+                text=True,
+                bufsize=1,  # 行缓冲
+                universal_newlines=True
             )
 
-            try:
-                stdout, stderr = process.communicate(timeout=self.config.FLASH_TIMEOUT)
-            except TypeError:
-                # Python < 3.3 不支持timeout参数，使用旧方式
-                stdout, stderr = process.communicate()
+            # 收集输出
+            output_lines = []
 
-            result['output'] = stdout
-            result['error'] = stderr
+            try:
+                # 实时读取输出
+                while True:
+                    line = process.stdout.readline()
+                    if not line:
+                        break
+                    output_lines.append(line.rstrip())
+                    self.logger.info(f"avrdude: {line.rstrip()}")
+
+                # 等待进程结束
+                process.wait(timeout=self.config.FLASH_TIMEOUT)
+
+            except subprocess.TimeoutExpired:
+                process.kill()
+                output_lines.append("ERROR: Flash operation timed out")
+                self.logger.error("Flash operation timed out")
+            except TypeError:
+                # Python < 3.3 不支持timeout参数
+                process.wait()
+
+            result['output'] = '\n'.join(output_lines)
+            result['error'] = ''
             result['duration'] = time.time() - start_time
 
             if process.returncode == 0:
@@ -254,7 +273,7 @@ class AVRFlasher:
 
             else:
                 result['message'] = f'Flash failed with return code {process.returncode}'
-                self.logger.error(f"Flash failed: {stderr}")
+                self.logger.error(f"Flash failed with return code {process.returncode}")
 
         except subprocess.TimeoutExpired:
             result['message'] = 'Flash operation timed out'
@@ -421,6 +440,181 @@ class AVRFlasher:
             self.logger.error(f"Error getting device info: {e}")
 
         return result
+
+    def flash_hex_file_stream(self, hex_file: str, output_callback=None, **kwargs):
+        """
+        烧录hex文件到AVR单片机 (流式输出版本)
+
+        Args:
+            hex_file: hex文件路径
+            output_callback: 输出回调函数，接收每行输出
+            **kwargs: 其他参数
+
+        Returns:
+            生成器，产生烧录过程中的输出行
+        """
+        start_time = time.time()
+
+        try:
+            # 验证hex文件
+            if not self.validate_hex_file(hex_file):
+                yield {"type": "error", "message": "Invalid hex file format"}
+                return
+
+            yield {"type": "info", "message": f"Hex file validation passed: {hex_file}"}
+
+            # 实现FangTangLink的Reset-Flash-Reset时序
+            yield {"type": "info", "message": "开始烧录程序到Arduino..."}
+
+            # 1. 使Arduino进入复位状态
+            if not self.control_arduino_reset(reset=True):
+                yield {"type": "warning", "message": "无法控制Arduino复位，继续尝试烧录..."}
+            else:
+                # 2. 等待一小段时间确保复位生效
+                time.sleep(0.5)
+
+                # 3. 使Arduino退出复位状态，进入bootloader
+                if not self.control_arduino_reset(reset=False):
+                    yield {"type": "warning", "message": "无法退出Arduino复位状态"}
+                else:
+                    # 4. 给bootloader一点时间初始化
+                    time.sleep(0.5)
+
+            # 5. 构建并执行avrdude命令
+            cmd = self.build_avrdude_command(hex_file, **kwargs)
+            yield {"type": "info", "message": f"Executing command: {' '.join(cmd)}"}
+
+            # 执行烧录
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                universal_newlines=True
+            )
+
+            # 实时输出
+            while True:
+                line = process.stdout.readline()
+                if not line:
+                    break
+
+                line = line.rstrip()
+                if line:
+                    yield {"type": "output", "message": line}
+                    if output_callback:
+                        output_callback(line)
+
+            # 等待进程结束
+            process.wait()
+            duration = time.time() - start_time
+
+            if process.returncode == 0:
+                yield {"type": "success", "message": f"Flash completed successfully in {duration:.2f}s"}
+
+                # 6. 操作后再次复位Arduino使程序开始运行
+                self.control_arduino_reset(reset=True)
+                time.sleep(0.1)
+                self.control_arduino_reset(reset=False)
+                yield {"type": "info", "message": "Arduino已重启，程序开始运行"}
+
+            else:
+                yield {"type": "error", "message": f"Flash failed with return code {process.returncode}"}
+
+        except subprocess.TimeoutExpired:
+            yield {"type": "error", "message": "Flash operation timed out"}
+        except FileNotFoundError:
+            yield {"type": "error", "message": "avrdude not found. Please install avrdude."}
+        except Exception as e:
+            yield {"type": "error", "message": f"Flash operation failed: {str(e)}"}
+
+    def open_serial_connection(self, port=None, baudrate=9600, timeout=1):
+        """
+        打开串口连接用于调试
+
+        Args:
+            port: 串口设备路径
+            baudrate: 波特率
+            timeout: 超时时间
+
+        Returns:
+            串口对象或None
+        """
+        try:
+            import serial
+
+            if not port:
+                port = self.config.DEFAULT_PORT
+
+            ser = serial.Serial(
+                port=port,
+                baudrate=baudrate,
+                timeout=timeout,
+                bytesize=serial.EIGHTBITS,
+                parity=serial.PARITY_NONE,
+                stopbits=serial.STOPBITS_ONE
+            )
+
+            self.logger.info(f"Serial connection opened: {port} @ {baudrate}")
+            return ser
+
+        except ImportError:
+            self.logger.error("pyserial not installed. Install with: pip install pyserial")
+            return None
+        except Exception as e:
+            self.logger.error(f"Failed to open serial connection: {e}")
+            return None
+
+    def read_serial_data(self, serial_conn, max_lines=100):
+        """
+        读取串口数据
+
+        Args:
+            serial_conn: 串口连接对象
+            max_lines: 最大读取行数
+
+        Returns:
+            读取到的数据行列表
+        """
+        try:
+            lines = []
+            for _ in range(max_lines):
+                if serial_conn.in_waiting > 0:
+                    line = serial_conn.readline().decode('utf-8', errors='ignore').strip()
+                    if line:
+                        lines.append(line)
+                else:
+                    break
+            return lines
+        except Exception as e:
+            self.logger.error(f"Failed to read serial data: {e}")
+            return []
+
+    def write_serial_data(self, serial_conn, data):
+        """
+        向串口写入数据
+
+        Args:
+            serial_conn: 串口连接对象
+            data: 要写入的数据
+
+        Returns:
+            写入是否成功
+        """
+        try:
+            if isinstance(data, str):
+                data = data.encode('utf-8')
+
+            bytes_written = serial_conn.write(data)
+            serial_conn.flush()
+
+            self.logger.info(f"Written {bytes_written} bytes to serial")
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Failed to write serial data: {e}")
+            return False
 
     def cleanup(self):
         """清理资源"""

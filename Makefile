@@ -1,6 +1,6 @@
 # RemoteFlasher Makefile
 
-.PHONY: help install install-dev test run-server run-client clean lint format reset-test
+.PHONY: help install install-dev test run-server run-client clean lint format reset-test test-features demo-stream
 
 # 默认目标
 help:
@@ -8,7 +8,9 @@ help:
 	@echo "  install      - 安装项目依赖"
 	@echo "  install-dev  - 安装开发依赖"
 	@echo "  test         - 运行所有测试"
+	@echo "  test-features- 测试新功能(流式烧录和串口调试)"
 	@echo "  reset-test   - 测试GPIO复位功能"
+	@echo "  demo-stream  - 运行流式烧录演示"
 	@echo "  run-server   - 启动API服务器"
 	@echo "  run-client   - 运行客户端工具"
 	@echo "  clean        - 清理临时文件"
@@ -29,6 +31,16 @@ install-dev: install
 test:
 	@echo "运行所有测试..."
 	python run_tests.py
+
+# 测试新功能
+test-features:
+	@echo "测试新功能(流式烧录和串口调试)..."
+	python tests/test_new_features.py
+
+# 运行流式烧录演示
+demo-stream:
+	@echo "运行流式烧录演示..."
+	python examples/stream_flash_demo.py
 
 # 测试GPIO复位功能
 reset-test:

@@ -6,7 +6,7 @@ RemoteFlasher客户端SDK
 import requests
 import json
 import time
-from typing import Optional, Dict, Any, Union
+from typing import Optional, Dict, Any, Union, Generator
 from pathlib import Path
 
 class RemoteFlasherClient:
@@ -194,6 +194,146 @@ class RemoteFlasherClient:
             return status.get('status') == 'running'
         except:
             return False
+
+    def flash_file_stream(self, file_path: str, **kwargs) -> Generator[Dict[str, Any], None, None]:
+        """
+        流式烧录本地hex文件
+
+        Args:
+            file_path: hex文件路径
+            **kwargs: 烧录参数
+
+        Yields:
+            Dict: 流式输出数据
+        """
+        try:
+            if not Path(file_path).exists():
+                yield {"type": "error", "message": f"File not found: {file_path}"}
+                return
+
+            files = {'file': open(file_path, 'rb')}
+            data = kwargs
+
+            response = self.session.post(
+                f"{self.base_url}/flash/stream",
+                files=files,
+                data=data,
+                stream=True,
+                timeout=self.timeout
+            )
+
+            response.raise_for_status()
+
+            for line in response.iter_lines(decode_unicode=True):
+                if line.startswith('data: '):
+                    try:
+                        data = json.loads(line[6:])
+                        yield data
+                    except json.JSONDecodeError:
+                        yield {"type": "output", "message": line}
+
+            files['file'].close()
+
+        except Exception as e:
+            yield {"type": "error", "message": f"Stream flash failed: {str(e)}"}
+
+    def serial_open(self, port: str = None, baudrate: int = 9600, timeout: int = 1) -> Dict[str, Any]:
+        """打开串口连接"""
+        try:
+            data = {
+                'port': port or '/dev/ttyS0',
+                'baudrate': baudrate,
+                'timeout': timeout
+            }
+
+            response = self.session.post(
+                f"{self.base_url}/serial/open",
+                json=data,
+                timeout=self.timeout
+            )
+
+            response.raise_for_status()
+            return response.json()
+
+        except Exception as e:
+            return self._handle_error(f"Serial open failed: {e}")
+
+    def serial_read(self, port: str = None, baudrate: int = 9600, max_lines: int = 100) -> Dict[str, Any]:
+        """读取串口数据"""
+        try:
+            data = {
+                'port': port or '/dev/ttyS0',
+                'baudrate': baudrate,
+                'max_lines': max_lines
+            }
+
+            response = self.session.post(
+                f"{self.base_url}/serial/read",
+                json=data,
+                timeout=self.timeout
+            )
+
+            response.raise_for_status()
+            return response.json()
+
+        except Exception as e:
+            return self._handle_error(f"Serial read failed: {e}")
+
+    def serial_write(self, data: str, port: str = None, baudrate: int = 9600, add_newline: bool = True) -> Dict[str, Any]:
+        """向串口写入数据"""
+        try:
+            payload = {
+                'port': port or '/dev/ttyS0',
+                'baudrate': baudrate,
+                'data': data,
+                'add_newline': add_newline
+            }
+
+            response = self.session.post(
+                f"{self.base_url}/serial/write",
+                json=payload,
+                timeout=self.timeout
+            )
+
+            response.raise_for_status()
+            return response.json()
+
+        except Exception as e:
+            return self._handle_error(f"Serial write failed: {e}")
+
+    def serial_close(self, port: str = None, baudrate: int = 9600) -> Dict[str, Any]:
+        """关闭串口连接"""
+        try:
+            data = {
+                'port': port or '/dev/ttyS0',
+                'baudrate': baudrate
+            }
+
+            response = self.session.post(
+                f"{self.base_url}/serial/close",
+                json=data,
+                timeout=self.timeout
+            )
+
+            response.raise_for_status()
+            return response.json()
+
+        except Exception as e:
+            return self._handle_error(f"Serial close failed: {e}")
+
+    def serial_status(self) -> Dict[str, Any]:
+        """获取串口连接状态"""
+        try:
+            response = self.session.get(
+                f"{self.base_url}/serial/status",
+                timeout=self.timeout
+            )
+
+            response.raise_for_status()
+            return response.json()
+
+        except Exception as e:
+            return self._handle_error(f"Serial status failed: {e}")
 
 # 便捷函数
 def flash_hex_file(file_path: Union[str, Path], 

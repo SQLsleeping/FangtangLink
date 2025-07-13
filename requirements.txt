@@ -7,6 +7,9 @@ Flask-CORS>=3.0.0
 # HTTP客户端
 requests>=2.25.0
 
+# 串口通信
+pyserial>=3.5
+
 # GPIO控制 (使用gpio命令行工具，无需Python库)
 
 # 开发和测试工具
